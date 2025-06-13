@@ -1,4 +1,4 @@
-<h1 align="center">Magisk Module Template Extended (MMT-Ex)</h1>
+<h1 align="center">Magisk Module Template Extended (dummy)</h1>
 
 <div align="center">
   <!-- Version -->
@@ -10,26 +10,8 @@
 </div>
 
 <div align="center">
-  <strong>MMT Extended is the spiritual successor of Unity and makes magisk module creation easy. More details in the 
-    <a href="https://github.com/Zackptg5/MMT-Extended/wiki">wiki</a>.
-</div>
-
-<div align="center">
-  <h3>
-    <a href="https://github.com/Zackptg5/MMT-Extended">
-      Source Code
-    </a>
-    <span> | </span>
-    <a href="https://github.com/Zackptg5/MMT-Extended-Addons">
-      Addons Repository
-    </a>
-    <span> | </span>
-    <a href="https://forum.xda-developers.com/apps/magisk/MMT-Extended">
-      XDA
-    </a>
-  </h3>
+  <strong>MMT Extended (dummy) is the simplest magisk module without installation and removal scripts.
 </div>
 
 ### Usage
 - [See here for creating your repo from this template](https://help.github.com/en/github/creating-cloning-and-archiving-repositories/creating-a-repository-from-a-template)
-- Follow instructions in [Wiki](https://github.com/Zackptg5/MMT-Extended/Wiki)
