@@ -1,0 +1,93 @@
+# .github/workflows/initialize-project.yml
+name: Initialize Project
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  init-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Initialize Project Files
+        id: initialize
+        run: |
+          repo_owner="${{ github.repository_owner }}"
+          repo_name=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          title_name=$(echo "$repo_name" | sed -e 's/[-_]/ /g' -e 's/\b\(.\)/\u\1/g')
+          
+          echo "Initializing project with:"
+          echo "  Owner: $repo_owner"
+          echo "  Repo Name: $repo_name"
+          echo "  Module Name: $title_name"
+
+          # (1) Initialize changelog.md
+          echo "  -> Initializing changelog.md..."
+          cat <<-EOF > changelog.md
+          ### v0.1.0 - $(date +'%d.%m.%Y')
+          * Initial release
+          EOF
+          # (2) Initialize module.prop
+          echo "  -> Initializing module.prop..."
+          cat <<-EOF > module.prop
+          id=$repo_name
+          name=$title_name
+          version=v0.1.0
+          versionCode=1
+          author=$repo_owner
+          description=$title_name
+          updateJson=https://raw.githubusercontent.com/${{ github.repository }}/master/update.json
+          EOF
+          # (3) Initialize update.json
+          sudo apt-get update && sudo apt-get install -y jq
+          jq -n \
+            --arg version "v0.1.0" --argjson code 1 \
+            --arg zipUrl "https://github.com/${{ github.repository }}/releases/download/v0.1.0/install.zip" \
+            --arg changelog "https://raw.githubusercontent.com/${{ github.repository }}/master/changelog.md" \
+            '{version: $version, versionCode: $code, zipUrl: $zipUrl, changelog: $changelog}' > update.json
+            
+          # (4) Initialize README.md
+          if [ -f "README.md" ]; then
+            sed -i "s/{{ID}}/$repo_name/g" README.md
+            sed -i "s/{{NAME}}/$title_name/g" README.md
+          else
+            echo "# $title_name" > README.md
+          fi
+          echo "All metadata files have been initialized."
+
+      - name: Activate Build Workflow and Self-Destruct
+        run: |
+          WORKFLOW_DIR=".github/workflows"
+          
+          INIT_WORKFLOW="$WORKFLOW_DIR/initialize-project.yml"
+          BUILD_WORKFLOW_DISABLED="$WORKFLOW_DIR/build-magisk-module.yml.disabled"
+          BUILD_WORKFLOW_ENABLED="$WORKFLOW_DIR/build-magisk-module.yml"
+
+          if [ ! -f "$BUILD_WORKFLOW_DISABLED" ]; then
+            echo "Error: Disabled build workflow ($BUILD_WORKFLOW_DISABLED) not found!"
+            exit 1
+          fi
+
+          echo "Activating build workflow..."
+          mv "$BUILD_WORKFLOW_DISABLED" "$BUILD_WORKFLOW_ENABLED"
+          
+          echo "Removing initialization workflow..."
+          rm "$INIT_WORKFLOW"
+          
+          echo "Workflow transition complete."
+
+      - name: Commit Final Setup
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m "ci: Finalize project initialization" -m "Activates the main build workflow and removes the init script."
+          git push

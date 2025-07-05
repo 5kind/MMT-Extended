@@ -1,0 +1,142 @@
+# .github/workflows/build-magisk-module.yml
+name: Build and Release Magisk Module
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'module.prop'
+  workflow_dispatch:
+      
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Checkout repository with full history
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          # Full history is needed for accurate commit counting
+          fetch-depth: 0
+
+      # Step 2:  Build Module Binary with Custom Script (if it exists)
+      - name: Build Module (Custom Script)
+        # This step runs only if a commit was made AND the build script exists
+        if: hashFiles('common/build.sh') != ''
+        run: |
+          echo "Found common/build.sh. Running custom build process..."
+          sudo apt-get update
+          sudo apt-get upgrade -y # <your-build-dependencies-here>
+          chmod +x common/build.sh
+          common/build.sh
+
+      # Step 3: Calculate VersionCode
+      # To disable this step, manually change "if: true" to "if: false" below.
+      - name: Calculate VersionCode
+        id: calculate_versioncode
+        if: true # <-- CONTROL SWITCH IS HERE
+        run: |
+          echo "Calculating new versionCode from commit count..."
+          new_version_code=$(git rev-list --count HEAD)
+          echo "New versionCode will be: ${new_version_code}"
+          sed -i "s/^versionCode=.*/versionCode=${new_version_code}/" module.prop
+          echo "Updated module.prop with new versionCode."
+
+      # Step 4: Validate Versions and Sync update.json
+      # This step ensures module.prop version >= update.json version and syncs them.
+      - name: Validate Versions and Sync update.json
+        id: validate_and_sync
+        run: |
+          # Get version info from module.prop
+          echo "Validating versions..."
+          prop_version=$(grep '^version=' module.prop | cut -d'=' -f2)
+          prop_version_code=$(grep '^versionCode=' module.prop | cut -d'=' -f2)
+          echo "module.prop: version=${prop_version}, versionCode=${prop_version_code}"
+
+          # Set module_version as an output for the release step
+          echo "module_version=${prop_version}" >> $GITHUB_OUTPUT
+
+          # If update.json doesn't exist, we can't validate but we need to commit module.prop changes
+          if [ ! -f "update.json" ]; then
+            echo "update.json not found, skipping validation."
+          else
+            # Get version info from update.json
+            json_version_code=$(jq -r '.versionCode' update.json)
+            echo "Current update.json: versionCode=${json_version_code}"
+
+            # Use version-aware sort to correctly compare versions like v1.10 vs v1.2
+            # This check prevents downgrades.
+            latest_version=$(printf '%s\n' "$prop_version" "$(jq -r '.version' update.json)" | sort -V | tail -n 1)
+            if [[ "$latest_version" != "$prop_version" && "$prop_version_code" -lt "$json_version_code" ]]; then
+              echo "::error::Downgrade detected! The version in update.json is newer."
+              exit 1
+            fi
+
+            # Update update.json if versions or URL are out of sync
+            expected_zip_url="https://github.com/${{ github.repository }}/releases/download/${prop_version}/install.zip"
+            if [[ "$(jq -r '.version' update.json)" != "$prop_version" || "$(jq -r '.versionCode' update.json)" != "$prop_version_code" || "$(jq -r '.zipUrl' update.json)" != "$expected_zip_url" ]]; then
+                echo "Mismatched data detected. Automatically updating update.json..."
+                jq --arg ver "$prop_version" --argjson code "$prop_version_code" --arg url "$expected_zip_url" \
+                   '.version = $ver | .versionCode = $code | .zipUrl = $url' \
+                   update.json > update.json.tmp && mv update.json.tmp update.json
+            fi
+          fi
+
+          # Check if git status has any changes (in module.prop or update.json)
+          if [[ -n $(git status --porcelain) ]]; then
+            echo "File changes detected. A commit and release are needed."
+            echo "needs_commit=true" >> $GITHUB_OUTPUT
+          else
+            echo "No file changes detected. Nothing to do."
+            echo "needs_commit=false" >> $GITHUB_OUTPUT
+          fi
+      
+      # Step 5: Commit updated files
+      - name: Commit File Changes
+        if: steps.validate_and_sync.outputs.needs_commit == 'true'
+        run: |
+          echo "Committing changes to module.prop and/or update.json..."
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          # Add both files, git will only stage the ones that changed
+          git add module.prop update.json
+          git commit -m "ci: Update version to ${{ steps.validate_and_sync.outputs.module_version }}"
+          git push
+
+      # Step 6: Package module files
+      - name: Package Module to install.zip
+        run: |
+          echo "Packaging module..."
+          zip_exclude_args=()
+          if [ -f ".gitignore" ]; then
+            echo "Found .gitignore, adding it to exclusions."
+            zip_exclude_args+=("-x@.gitignore")
+          fi
+          if [ -f ".zipignore" ]; then
+            echo "Found .zipignore, adding it to exclusions."
+            zip_exclude_args+=("-x@.zipignore")
+          fi
+          # Package all module-related files into install.zip
+          echo "Running zip command with exclusions: ${zip_exclude_args[@]}"
+          zip -r install.zip . ${zip_exclude_args[@]}
+
+      # Step 7: Create GitHub Release and upload install.zip
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Use the version from module.prop as the Release tag and title
+          tag_name: ${{ steps.validate_and_sync.outputs.module_version }}
+          name: Release ${{ steps.validate_and_sync.outputs.module_version }}
+          # Files to upload
+          files: install.zip
+          # Uncomment the line below if you want this to be a draft Release
+          # draft: true
+          # Uncomment the line below if you want this to be a prerelease
+          # prerelease: false
+          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
